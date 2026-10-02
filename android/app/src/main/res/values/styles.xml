@@ -31,6 +31,14 @@
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- Without this, a standalone Activity launched fresh (new task, e.g.
+             tapping its home-screen icon) has nothing behind it but solid
+             black, since there is no previous Activity in its stack to show
+             through the translucent window. This tells Android to composite
+             the real device wallpaper behind us instead of black. Note: this
+             shows the wallpaper image only — not live home-screen icons/
+             widgets, which only exist in the Launcher app's own process. -->
+        <item name="android:windowShowWallpaper">true</item>
     </style>
 
 

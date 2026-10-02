@@ -38,8 +38,16 @@
 
   /* Shell's resting position on screen — driven by --pos-x/--pos-y custom
      properties (percentages), set from JS. Defaults to centered until a
-     calibrated position is loaded from storage (see calibration code). */
-  #widget{ position:absolute; left:var(--pos-x, 50%); top:var(--pos-y, 50%); width:1px; height:1px; }
+     calibrated position is loaded from storage (see calibration code).
+     --widget-scale scales the ENTIRE widget (shell + ring + beads) together
+     as one unit via a single transform on the anchor element, so the
+     rotation ring radius and bead sizes stay proportionally correct
+     relative to the shell at any calibrated size — never resized/positioned
+     independently of each other. */
+  #widget{
+    position:absolute; left:var(--pos-x, 50%); top:var(--pos-y, 50%); width:1px; height:1px;
+    transform: scale(var(--widget-scale, 1));
+  }
 
   /* Calibration mode: shell gets a dashed ring + subtle pulse so it's clear
      it's draggable, and a small hint toast explains what to do. */
@@ -454,34 +462,48 @@ document.addEventListener('pointerdown', (e)=>{
 });
 
 // ---------------------------------------------------------------------------
-// Shell position calibration — lets the user drag the shell to exactly match
-// wherever they've placed the app's real icon on their home screen, so it
-// feels like a genuine home-screen widget rather than an arbitrary fixed
-// spot. Position is stored as percentages (not raw pixels) so it stays
-// anchored in the same relative spot across different screen sizes/
-// orientations. Entered via a long-press on the shell while closed.
+// Shell position + size calibration — lets the user drag the shell to
+// exactly match wherever they've placed the app's real icon on their home
+// screen, and pinch it to the same size as that real icon, so it feels like
+// a genuine home-screen widget rather than an arbitrary fixed spot/size.
+// Position is stored as percentages and scale as a plain multiplier (not raw
+// pixels) so both stay correct across different screen sizes/orientations.
+// Scaling is applied once to the #widget anchor itself (see CSS), so the
+// rotation ring radius and every bead automatically stay in the same
+// proportion to the shell at any calibrated size — nothing about the
+// rotation circle needs separate adjustment.
+// Entered via a long-press on the shell while closed:
+//   - 1 finger dragging  -> moves the widget
+//   - 2 fingers pinching -> resizes the widget (shell + ring + beads together)
 // ---------------------------------------------------------------------------
 const POS_STORAGE_KEY = 'seashell_widget_pos';
+const MIN_SCALE = 0.5, MAX_SCALE = 2.2;
 let isCalibrating = false;
-let calibDrag = null;
+let currentScale = 1;
+const calibPointers = new Map(); // pointerId -> {x,y}
+let pinchStartDist = null, pinchStartScale = 1;
 
 function loadSavedPosition(){
   try {
     const raw = localStorage.getItem(POS_STORAGE_KEY);
     if (!raw) return;
-    const { xPct, yPct } = JSON.parse(raw);
+    const { xPct, yPct, scale } = JSON.parse(raw);
     if (typeof xPct === 'number' && typeof yPct === 'number') {
       widget.style.setProperty('--pos-x', `${xPct}%`);
       widget.style.setProperty('--pos-y', `${yPct}%`);
+    }
+    if (typeof scale === 'number') {
+      currentScale = scale;
+      widget.style.setProperty('--widget-scale', String(scale));
     }
   } catch (err) {
     console.warn('loadSavedPosition failed:', err);
   }
 }
 
-function savePosition(xPct, yPct){
+function savePosition(xPct, yPct, scale){
   try {
-    localStorage.setItem(POS_STORAGE_KEY, JSON.stringify({ xPct, yPct }));
+    localStorage.setItem(POS_STORAGE_KEY, JSON.stringify({ xPct, yPct, scale }));
   } catch (err) {
     console.warn('savePosition failed:', err);
   }
@@ -491,46 +513,79 @@ function enterCalibrationMode(){
   if (isOpen || isAnimating) return;
   isCalibrating = true;
   document.body.classList.add('calibrating');
-  showToast('Drag the shell to match your home screen icon, then tap it to confirm');
+  showToast('Drag to reposition · pinch with 2 fingers to resize · lift to confirm');
 }
 
 function exitCalibrationMode(){
   isCalibrating = false;
   document.body.classList.remove('calibrating');
+  calibPointers.clear();
+  pinchStartDist = null;
+}
+
+function currentWidgetPercent(){
+  const style = getComputedStyle(widget);
+  return {
+    xPct: parseFloat(style.getPropertyValue('--pos-x')) || 50,
+    yPct: parseFloat(style.getPropertyValue('--pos-y')) || 50,
+  };
+}
+
+function pointerDistance(){
+  const pts = [...calibPointers.values()];
+  return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
 }
 
 let longPressTimer = null;
 shell.addEventListener('pointerdown', (e)=>{
-  if (isCalibrating) return; // handled by calibration drag listener below
-  longPressTimer = setTimeout(()=> enterCalibrationMode(), 600);
-});
-shell.addEventListener('pointerup', ()=> clearTimeout(longPressTimer));
-shell.addEventListener('pointercancel', ()=> clearTimeout(longPressTimer));
-
-shell.addEventListener('pointerdown', (e)=>{
-  if (!isCalibrating) return;
+  if (!isCalibrating) {
+    longPressTimer = setTimeout(()=> enterCalibrationMode(), 600);
+    return;
+  }
   e.stopPropagation();
-  calibDrag = { pointerId: e.pointerId };
   shell.setPointerCapture(e.pointerId);
+  calibPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (calibPointers.size === 2) {
+    pinchStartDist = pointerDistance();
+    pinchStartScale = currentScale;
+  }
 });
 shell.addEventListener('pointermove', (e)=>{
-  if (!isCalibrating || !calibDrag) return;
-  const xPct = (e.clientX / window.innerWidth) * 100;
-  const yPct = (e.clientY / window.innerHeight) * 100;
-  widget.style.setProperty('--pos-x', `${xPct}%`);
-  widget.style.setProperty('--pos-y', `${yPct}%`);
+  if (!isCalibrating || !calibPointers.has(e.pointerId)) return;
+  calibPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (calibPointers.size >= 2) {
+    // Two (or more) fingers down: resize, position stays as-is.
+    const dist = pointerDistance();
+    if (pinchStartDist) {
+      currentScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, pinchStartScale * (dist / pinchStartDist)));
+      widget.style.setProperty('--widget-scale', String(currentScale));
+    }
+  } else {
+    // Single finger: move.
+    const xPct = (e.clientX / window.innerWidth) * 100;
+    const yPct = (e.clientY / window.innerHeight) * 100;
+    widget.style.setProperty('--pos-x', `${xPct}%`);
+    widget.style.setProperty('--pos-y', `${yPct}%`);
+  }
 });
-shell.addEventListener('pointerup', (e)=>{
-  if (!isCalibrating || !calibDrag) return;
+function endCalibPointer(e){
+  if (!isCalibrating || !calibPointers.has(e.pointerId)) return;
   e.stopPropagation();
-  try{ shell.releasePointerCapture(calibDrag.pointerId); }catch(err){}
-  calibDrag = null;
-  const xPct = (e.clientX / window.innerWidth) * 100;
-  const yPct = (e.clientY / window.innerHeight) * 100;
-  savePosition(xPct, yPct);
-  exitCalibrationMode();
-  showToast('Position saved');
-});
+  try{ shell.releasePointerCapture(e.pointerId); }catch(err){}
+  calibPointers.delete(e.pointerId);
+
+  if (calibPointers.size < 2) pinchStartDist = null; // pinch ended if it was happening
+
+  if (calibPointers.size === 0) {
+    const { xPct, yPct } = currentWidgetPercent();
+    savePosition(xPct, yPct, currentScale);
+    exitCalibrationMode();
+    showToast('Position & size saved');
+  }
+}
+shell.addEventListener('pointerup', (e)=>{ clearTimeout(longPressTimer); endCalibPointer(e); });
+shell.addEventListener('pointercancel', (e)=>{ clearTimeout(longPressTimer); endCalibPointer(e); });
 
 loadSavedPosition();
 

@@ -25,6 +25,7 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBar"
             android:launchMode="singleTask"
+            android:excludeFromRecents="true"
             android:exported="true">
 
             <intent-filter>

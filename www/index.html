@@ -36,10 +36,22 @@
   }
   .decoy{ display:none; }
 
-  /* Shell's fixed resting position on screen — change these two values to
-     move the whole widget elsewhere (e.g. a corner). Currently centered;
-     revisit once we know the exact home-screen icon placement to match. */
-  #widget{ position:absolute; left:50%; top:50%; width:1px; height:1px; }
+  /* Shell's resting position on screen — driven by --pos-x/--pos-y custom
+     properties (percentages), set from JS. Defaults to centered until a
+     calibrated position is loaded from storage (see calibration code). */
+  #widget{ position:absolute; left:var(--pos-x, 50%); top:var(--pos-y, 50%); width:1px; height:1px; }
+
+  /* Calibration mode: shell gets a dashed ring + subtle pulse so it's clear
+     it's draggable, and a small hint toast explains what to do. */
+  body.calibrating #shell{
+    outline: 2px dashed rgba(255,255,255,.85);
+    outline-offset: 6px;
+    animation: calibratePulse 1.4s ease-in-out infinite;
+  }
+  @keyframes calibratePulse{
+    0%,100%{ box-shadow: 0 12px 26px rgba(0,0,0,.5), inset 0 0 22px rgba(255,255,255,.08), 0 0 0 0 rgba(255,255,255,.35); }
+    50%{ box-shadow: 0 12px 26px rgba(0,0,0,.5), inset 0 0 22px rgba(255,255,255,.08), 0 0 0 10px rgba(255,255,255,0); }
+  }
 
   #shell{
     position:absolute; left:0; top:0;
@@ -432,6 +444,7 @@ async function exitToHome(){
 shell.addEventListener('pointerdown', (e)=> e.stopPropagation());
 shell.addEventListener('click', (e)=>{
   e.stopPropagation();
+  if (isCalibrating) return; // taps don't open/close while repositioning
   if (isAnimating) return; // ignore taps entirely while opening or closing
   isOpen ? closeWidget(true) : openWidget();
 });
@@ -439,6 +452,87 @@ shell.addEventListener('click', (e)=>{
 document.addEventListener('pointerdown', (e)=>{
   if (isOpen && !isAnimating && !e.target.closest('#widget')) closeWidget(true);
 });
+
+// ---------------------------------------------------------------------------
+// Shell position calibration — lets the user drag the shell to exactly match
+// wherever they've placed the app's real icon on their home screen, so it
+// feels like a genuine home-screen widget rather than an arbitrary fixed
+// spot. Position is stored as percentages (not raw pixels) so it stays
+// anchored in the same relative spot across different screen sizes/
+// orientations. Entered via a long-press on the shell while closed.
+// ---------------------------------------------------------------------------
+const POS_STORAGE_KEY = 'seashell_widget_pos';
+let isCalibrating = false;
+let calibDrag = null;
+
+function loadSavedPosition(){
+  try {
+    const raw = localStorage.getItem(POS_STORAGE_KEY);
+    if (!raw) return;
+    const { xPct, yPct } = JSON.parse(raw);
+    if (typeof xPct === 'number' && typeof yPct === 'number') {
+      widget.style.setProperty('--pos-x', `${xPct}%`);
+      widget.style.setProperty('--pos-y', `${yPct}%`);
+    }
+  } catch (err) {
+    console.warn('loadSavedPosition failed:', err);
+  }
+}
+
+function savePosition(xPct, yPct){
+  try {
+    localStorage.setItem(POS_STORAGE_KEY, JSON.stringify({ xPct, yPct }));
+  } catch (err) {
+    console.warn('savePosition failed:', err);
+  }
+}
+
+function enterCalibrationMode(){
+  if (isOpen || isAnimating) return;
+  isCalibrating = true;
+  document.body.classList.add('calibrating');
+  showToast('Drag the shell to match your home screen icon, then tap it to confirm');
+}
+
+function exitCalibrationMode(){
+  isCalibrating = false;
+  document.body.classList.remove('calibrating');
+}
+
+let longPressTimer = null;
+shell.addEventListener('pointerdown', (e)=>{
+  if (isCalibrating) return; // handled by calibration drag listener below
+  longPressTimer = setTimeout(()=> enterCalibrationMode(), 600);
+});
+shell.addEventListener('pointerup', ()=> clearTimeout(longPressTimer));
+shell.addEventListener('pointercancel', ()=> clearTimeout(longPressTimer));
+
+shell.addEventListener('pointerdown', (e)=>{
+  if (!isCalibrating) return;
+  e.stopPropagation();
+  calibDrag = { pointerId: e.pointerId };
+  shell.setPointerCapture(e.pointerId);
+});
+shell.addEventListener('pointermove', (e)=>{
+  if (!isCalibrating || !calibDrag) return;
+  const xPct = (e.clientX / window.innerWidth) * 100;
+  const yPct = (e.clientY / window.innerHeight) * 100;
+  widget.style.setProperty('--pos-x', `${xPct}%`);
+  widget.style.setProperty('--pos-y', `${yPct}%`);
+});
+shell.addEventListener('pointerup', (e)=>{
+  if (!isCalibrating || !calibDrag) return;
+  e.stopPropagation();
+  try{ shell.releasePointerCapture(calibDrag.pointerId); }catch(err){}
+  calibDrag = null;
+  const xPct = (e.clientX / window.innerWidth) * 100;
+  const yPct = (e.clientY / window.innerHeight) * 100;
+  savePosition(xPct, yPct);
+  exitCalibrationMode();
+  showToast('Position saved');
+});
+
+loadSavedPosition();
 
 // circular drag — clamped to a small rotation range
 let rotDrag = null, rafPending = false, lastMoveEvent = null;

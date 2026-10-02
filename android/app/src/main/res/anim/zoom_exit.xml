@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paired with zoom_enter.xml: our Seashell shell screen shrinks slightly
+     and fades out as the new app zooms in on top of it. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <scale
+        android:fromXScale="1.0"
+        android:toXScale="1.1"
+        android:fromYScale="1.0"
+        android:toYScale="1.1"
+        android:pivotX="50%"
+        android:pivotY="50%"
+        android:duration="220"
+        android:interpolator="@android:anim/decelerate_interpolator" />
+    <alpha
+        android:fromAlpha="1.0"
+        android:toAlpha="0.0"
+        android:duration="220" />
+</set>

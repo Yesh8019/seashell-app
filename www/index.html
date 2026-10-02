@@ -43,8 +43,8 @@
 
   #shell{
     position:absolute; left:0; top:0;
-    width:104px; height:104px; margin:-52px;
-    border-radius:24px; cursor:pointer;
+    width:122px; height:122px; margin:-61px;
+    border-radius:28px; cursor:pointer;
     transition: transform .5s cubic-bezier(.22,.85,.3,1.15);
     box-shadow: 0 12px 26px rgba(0,0,0,.5), inset 0 0 22px rgba(255,255,255,.08);
     background: radial-gradient(circle at 35% 28%, #fff8f0, var(--nacre1) 30%, var(--nacre2) 58%, var(--nacre4) 85%, #9a86c9 100%);
@@ -66,16 +66,16 @@
      the gaps between beads. Without an explicit size here the container has
      zero area and drags starting off a bead fall through to the background. */
   #chain{
-    position:absolute; left:-170px; top:-170px; width:340px; height:340px;
+    position:absolute; left:-200px; top:-200px; width:400px; height:400px;
     opacity:0; transition:opacity .3s ease; pointer-events:none;
   }
   #widget.open #chain{ opacity:1; pointer-events:auto; }
 
   .bead{
-    position:absolute; left:50%; top:50%; width:28px; height:28px; margin:-14px;
-    border-radius:9px;
+    position:absolute; left:50%; top:50%; width:34px; height:34px; margin:-17px;
+    border-radius:10px;
     display:flex; align-items:center; justify-content:center;
-    font-size:13px; font-weight:500; color:#0c1a22;
+    font-size:15px; font-weight:500; color:#0c1a22;
     box-shadow: 0 5px 12px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.4);
     cursor:pointer;
     overflow:hidden;
@@ -86,9 +86,26 @@
   .bead.dot{ box-shadow:none; border: 2px solid rgba(255,255,255,.5); }
   .bead.anim{
     transition:
-      translate .3s cubic-bezier(.22,.85,.3,1.15) 30ms,
-      scale .22s cubic-bezier(.34,1.4,.64,1) 0ms,
-      opacity .2s ease 0ms;
+      translate .36s cubic-bezier(.22,.85,.3,1.15) 30ms,
+      scale .26s cubic-bezier(.34,1.4,.64,1) 0ms,
+      opacity .24s ease 0ms;
+  }
+  /* Selected-bead "zoom into app" transition: the chosen bead scales up and
+     fills more of the view while everything else fades away, giving a sense
+     of diving into the app rather than an abrupt jump cut. */
+  .bead.launch-selected{
+    transition: translate .32s cubic-bezier(.3,.05,.25,1), scale .32s cubic-bezier(.3,.05,.25,1), opacity .32s ease;
+    scale: 2.6 !important;
+    opacity: 1 !important;
+    z-index: 50;
+  }
+  .bead.launch-fade{
+    transition: opacity .22s ease;
+    opacity: 0 !important;
+  }
+  #shell.launch-fade{
+    transition: opacity .22s ease;
+    opacity: 0;
   }
 
   #toast{
@@ -140,7 +157,7 @@ const WINDOW_CENTER = 180;          // fixed absolute direction beads reveal tow
 
 // single ring around the shell — evenly spaced, radius sized so even two
 // full-size (40px) neighbors keep at least ~12px clearance between them
-const RING_RADIUS = 88;
+const RING_RADIUS = 104;
 const LOCAL = [];
 for (let i=0;i<N;i++){
   LOCAL.push({ angle: i * (360/N), radius: RING_RADIUS });
@@ -199,19 +216,45 @@ async function loadRealIcons(){
     const byPackage = {};
     installed.forEach(a => { byPackage[a.packageName] = a; });
 
-    APPS.forEach(app => {
+    for (const app of APPS) {
       const match = byPackage[app.pkg];
       if (match) {
         app.icon = match.icon;
         app.n = match.label || app.n;
+        app.dotColor = await extractDominantColor(match.icon).catch(() => app.c);
       }
-    });
+    }
 
     renderBeadContents();
   } catch (err) {
     // Leave fallback placeholders in place if anything goes wrong.
     console.warn('loadRealIcons failed:', err);
   }
+}
+
+/**
+ * Samples a real app icon down to a single pixel to get its dominant/
+ * average color — used to tint the shrunk "dot" state with a real color
+ * from the app instead of leaving it plain/transparent.
+ */
+function extractDominantColor(iconDataUrl){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 1; c.height = 1;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, 1, 1);
+        const [r,g,b] = ctx.getImageData(0,0,1,1).data;
+        resolve(`rgb(${r},${g},${b})`);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = reject;
+    img.src = iconDataUrl;
+  });
 }
 
 /** Fills each bead's inner content (icon image or fallback letter). */
@@ -222,10 +265,8 @@ function renderBeadContents(){
     const i = +el.dataset.i;
     const app = APPS[i];
     if (app.icon) {
-      el.style.background = 'transparent';
       el.innerHTML = `<img src="${app.icon}" alt="${app.n}">`;
     } else {
-      el.style.background = app.c;
       el.textContent = app.n[0];
     }
   }
@@ -261,14 +302,21 @@ function layout(){
     el.style.zIndex = Math.round(scale*100);
 
     el.classList.toggle('dot', isDot);
+    const app = APPS[i];
     if (isDot) {
+      // Dots are always colored (real dominant icon color once loaded,
+      // fallback color until then) — never transparent — so the collapsed
+      // ring still reads as "colored beads", not blank/invisible dots.
+      el.style.background = app.dotColor || app.c;
       el.innerHTML = '';
-    } else if (APPS[i].icon) {
+    } else if (app.icon) {
+      el.style.background = 'transparent';
       // Icon already rendered by renderBeadContents(); layout() only needs
       // to size/position the bead, not touch its icon content.
-      if (!el.querySelector('img')) el.innerHTML = `<img src="${APPS[i].icon}" alt="${APPS[i].n}">`;
+      if (!el.querySelector('img')) el.innerHTML = `<img src="${app.icon}" alt="${app.n}">`;
     } else {
-      el.textContent = APPS[i].n[0];
+      el.style.background = app.c;
+      el.textContent = app.n[0];
     }
   }
 }
@@ -474,7 +522,7 @@ function endRotDrag(e){
     const scaleNow = parseFloat(tapTarget.style.scale || 0);
     if (scaleNow > DOT_SIZE + 0.05){
       const app = APPS[+tapTarget.dataset.i];
-      launchRealApp(app);
+      launchRealApp(app, tapTarget);
     }
   } else if (Math.abs(velocity) > 0.01){
     startInertia(velocity);
@@ -484,21 +532,46 @@ chain.addEventListener('pointerup', endRotDrag);
 chain.addEventListener('pointercancel', endRotDrag);
 
 /**
- * Launches the real app via the native AppList plugin. Falls back to a
- * toast message if the plugin isn't available (e.g. testing in a plain
- * browser) or if the launch itself fails (app not installed, etc.).
+ * Plays a quick "zoom into this app" transition — the selected bead grows
+ * and everything else (other beads + shell) fades out — before actually
+ * firing the launch intent, so switching apps feels like a smooth dive in
+ * rather than an abrupt jump cut. Also snaps the widget closed in the
+ * background with no animation, so there's nothing left open to see when
+ * the user eventually returns to Seashell.
  */
-async function launchRealApp(app){
+async function launchRealApp(app, selectedEl){
+  const ZOOM_MS = 300;
+  isAnimating = true;
+  clearAllTimers();
+  stopInertia();
+
+  const beads = [...chain.children];
+  beads.forEach(el => {
+    el.style.transitionDelay = '0ms';
+    if (el === selectedEl) {
+      el.classList.add('launch-selected');
+    } else {
+      el.classList.add('launch-fade');
+    }
+  });
+  shell.classList.add('launch-fade');
+
   if (!window.Capacitor || !window.Capacitor.Plugins || !window.Capacitor.Plugins.AppList) {
     showToast(`Opening ${app.n} (no native bridge — browser preview)`);
-    return;
+  } else {
+    try {
+      await window.Capacitor.Plugins.AppList.launchApp({ packageName: app.pkg });
+    } catch (err) {
+      showToast(`Could not open ${app.n}`);
+      console.warn('launchApp failed:', err);
+    }
   }
-  try {
-    await window.Capacitor.Plugins.AppList.launchApp({ packageName: app.pkg });
-  } catch (err) {
-    showToast(`Could not open ${app.n}`);
-    console.warn('launchApp failed:', err);
-  }
+
+  setTimeout(() => {
+    beads.forEach(el => el.classList.remove('launch-selected', 'launch-fade'));
+    shell.classList.remove('launch-fade');
+    resetToClosedInstant();
+  }, ZOOM_MS);
 }
 
 buildBeads();

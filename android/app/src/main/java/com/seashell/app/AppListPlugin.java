@@ -89,6 +89,12 @@ public class AppListPlugin extends Plugin {
 
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(launchIntent);
+        // Replace Android's default launch transition (abrupt jump-cut) with
+        // a smooth zoom: the new app scales up + fades in while our shell
+        // screen scales up slightly and fades out underneath it.
+        if (getActivity() != null) {
+            getActivity().overridePendingTransition(R.anim.zoom_enter, R.anim.zoom_exit);
+        }
         call.resolve();
     }
 

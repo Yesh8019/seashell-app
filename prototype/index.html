@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seashell Widget Prototype</title>
+<style>
+  :root{
+    --shell-size: 90px;
+    --app-size-max: 56px;
+    --app-size-min: 30px;
+    --ring-radius: 150px;
+  }
+  html,body{
+    height:100%;
+    margin:0;
+    background: radial-gradient(circle at 30% 20%, #1b2735, #090a0f 70%);
+    overflow:hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    touch-action: none;
+  }
+  #stage{
+    position:relative;
+    width:100%;
+    height:100%;
+  }
+  #widget-root{
+    position:absolute;
+    left: 120px;
+    top: 220px;
+    width: var(--shell-size);
+    height: var(--shell-size);
+  }
+
+  /* Drag catcher - generous invisible hit area around the whole ring */
+  #drag-catcher{
+    position:absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(var(--ring-radius) * 2 + 140px);
+    height: calc(var(--ring-radius) * 2 + 140px);
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    /* visible only for debugging; keep transparent for prod */
+    background: transparent;
+    z-index: 1;
+  }
+
+  #shell{
+    position:absolute;
+    left:0; top:0;
+    width: var(--shell-size);
+    height: var(--shell-size);
+    border-radius: 22px;
+    background: linear-gradient(135deg, #fdf6ff 0%, #ffe3f0 20%, #d9c2ff 45%, #b9e3ff 65%, #fff0e0 85%, #ffffff 100%);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.4) inset,
+      0 8px 24px rgba(0,0,0,0.45),
+      0 0 40px rgba(180,160,255,0.25);
+    cursor: pointer;
+    z-index: 3;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size: 28px;
+    user-select:none;
+  }
+  #shell::after{
+    content: "🐚";
+    filter: saturate(1.1);
+  }
+
+  .app{
+    position:absolute;
+    left:0; top:0;
+    border-radius: 16px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:#fff;
+    font-weight:600;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    user-select:none;
+    z-index: 2;
+    will-change: transform, opacity, width, height;
+    opacity: 0;
+  }
+  .app.expanded{
+    cursor:pointer;
+  }
+  .app .dot{
+    display:none;
+  }
+  .app.is-dot{
+    box-shadow:none;
+  }
+  .app.is-dot .label{
+    display:none;
+  }
+  .app.is-dot .dot{
+    display:block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  #hint{
+    position:absolute;
+    left: 50%;
+    bottom: 30px;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.55);
+    font-size: 13px;
+    text-align:center;
+    max-width: 320px;
+    line-height:1.5;
+  }
+
+  #reset-btn{
+    position:absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(255,255,255,0.08);
+    color:#eee;
+    border:1px solid rgba(255,255,255,0.25);
+    padding:8px 14px;
+    border-radius:8px;
+    font-size:12px;
+    cursor:pointer;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="widget-root">
+    <div id="drag-catcher"></div>
+    <div id="shell"></div>
+  </div>
+  <div id="hint">Tap the shell to open/close it.<br>Drag in a circle around it to browse the 15 apps.</div>
+  <button id="reset-btn">Close Shell</button>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Config (per spec) ----------
+  const TOTAL_APPS = 15;
+  const EXPANDED_COUNT = 8;
+  const RING_RADIUS = 150;          // distance from shell center to app center
+  const APP_MAX = 56;               // biggest expanded app size
+  const APP_MIN_EXPANDED = 34;      // smallest of the 8 expanded apps
+  const DOT_SIZE = 10;
+  const DRAG_SENSITIVITY = 1.8;     // locked-in feel from spec
+  const OPEN_SPIN_DEG = 720;        // two full rotations
+  const TOTAL_ANIM_MS = 900;        // ~0.9s total open/close sequence
+  const APP_CASCADE_MS = 650;       // must finish before shell spin completes
+  const APP_STAGGER_MS = APP_CASCADE_MS / TOTAL_APPS;
+  const APP_POP_MS = 180;           // pop/scale-up phase
+  const APP_FLY_MS = 260;           // translate-outward phase
+
+  // App color palette (placeholder brand colors)
+  const COLORS = [
+    "#FF6B6B","#FFD93D","#6BCB77","#4D96FF","#9D65C9",
+    "#FF9F1C","#2EC4B6","#E71D36","#011627","#FDB833",
+    "#F72585","#3A86FF","#8338EC","#FB5607","#06D6A0"
+  ];
+
+  const shell = document.getElementById("shell");
+  const widgetRoot = document.getElementById("widget-root");
+  const dragCatcher = document.getElementById("drag-catcher");
+  const resetBtn = document.getElementById("reset-btn");
+
+  // ---------- State ----------
+  let isOpen = false;
+  let isAnimating = false;
+  let rotationDeg = 0;          // continuous, unclamped
+  let dragging = false;
+  let dragStartAngle = 0;
+  let dragStartRotation = 0;
+  let lastAngle = 0;
+  let lastMoveTime = 0;
+  let angularVelocity = 0;      // deg/ms, for momentum
+  let coastRAF = null;
+  let openCloseTimers = [];
+
+  // "reveal window" fixed direction (degrees, 0 = to the right, going clockwise)
+  const REVEAL_ANGLE = 0;
+
+  // ---------- Build 15 app elements ----------
+  const apps = [];
+  for(let i=0;i<TOTAL_APPS;i++){
+    const el = document.createElement("div");
+    el.className = "app";
+    el.style.color = COLORS[i % COLORS.length];
+    el.style.background = COLORS[i % COLORS.length];
+    el.innerHTML = '<span class="label">' + String.fromCharCode(65+i) + '</span><span class="dot"></span>';
+    el.dataset.index = i;
+    widgetRoot.appendChild(el);
+    apps.push({el, index:i});
+
+    el.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      if(!isOpen || isAnimating) return;
+      if(el.classList.contains("expanded")){
+        // Only fully expanded (not mid-transition) apps respond
+        alert("Launching app " + String.fromCharCode(65+i));
+      }
+    });
+  }
+
+  function clearTimers(){
+    openCloseTimers.forEach(t=>clearTimeout(t));
+    openCloseTimers = [];
+  }
+
+  // ---------- Layout: given current rotation, decide angle/size/expanded per app ----------
+  function angleForApp(i){
+    // base position on ring, plus rotation offset, clockwise positive
+    return (i * (360/TOTAL_APPS) + rotationDeg) % 360;
+  }
+
+  function angularDistance(a, b){
+    let d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+
+  function layout(){
+    // Determine the 8 apps closest (angularly) to the fixed reveal direction
+    const withDist = apps.map(a=>{
+      const ang = angleForApp(a.index);
+      return {a, ang, dist: angularDistance(ang, REVEAL_ANGLE)};
+    });
+    const sorted = [...withDist].sort((x,y)=> x.dist - y.dist);
+    const expandedSet = new Set(sorted.slice(0, EXPANDED_COUNT).map(o=>o.a.index));
+
+    // Rank within expanded set (0 = closest/biggest ... 7 = smallest expanded)
+    const expandedSorted = sorted.slice(0, EXPANDED_COUNT);
+    const rankByIndex = {};
+    expandedSorted.forEach((o, rank)=> rankByIndex[o.a.index] = rank);
+
+    withDist.forEach(({a, ang})=>{
+      const rad = ang * Math.PI/180;
+      const isExpanded = expandedSet.has(a.index);
+      let size;
+      if(isExpanded){
+        const rank = rankByIndex[a.index]; // 0..7
+        const t = rank/(EXPANDED_COUNT-1); // 0..1
+        size = APP_MAX - t*(APP_MAX-APP_MIN_EXPANDED);
+      } else {
+        size = DOT_SIZE;
+      }
+      const cx = Math.cos(rad) * RING_RADIUS;
+      const cy = Math.sin(rad) * RING_RADIUS;
+      const shellHalf = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shell-size')) / 2 || 45;
+
+      a.a ? null : null; // no-op guard
+      const el = a.el;
+      el.style.width = size + "px";
+      el.style.height = size + "px";
+      // position relative to widget-root center (shell center)
+      const rootSize = shellHalf; // half of shell size
+      el.style.transform = `translate(${rootSize + cx - size/2}px, ${rootSize + cy - size/2}px)`;
+      el.classList.toggle("expanded", isExpanded);
+      el.classList.toggle("is-dot", !isExpanded);
+      // Guard against stuck opacity-0 bug: force full opacity whenever layout runs (while open)
+      if(isOpen) el.style.opacity = "1";
+    });
+  }
+
+  // ---------- Open / Close animation ----------
+  function openShell(){
+    if(isAnimating || isOpen) return;
+    isAnimating = true;
+    isOpen = true;
+    clearTimers();
+
+    shell.style.transition = `transform ${TOTAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1)`;
+    shell.style.transform = `rotate(${OPEN_SPIN_DEG}deg)`;
+
+    // cascade apps out, ascending index order = clockwise sweep
+    apps.forEach((a, i)=>{
+      const el = a.el;
+      el.style.transition = "none";
+      el.style.opacity = "0";
+      el.style.width = "0px";
+      el.style.height = "0px";
+      el.style.transform = `translate(45px,45px) scale(0.2)`;
+
+      const t = setTimeout(()=>{
+        layout(); // establishes target size/position for this app (and all, harmless)
+        el.style.transition = `transform ${APP_POP_MS}ms ease-out, opacity ${APP_POP_MS}ms ease-out`;
+        el.style.opacity = "1";
+        // Pop phase already applied via layout's transform+size; browsers will animate both
+        // Fly-out phase timing is expressed via the transition duration covering translate.
+        const t2 = setTimeout(()=>{
+          el.style.transition = `transform ${APP_FLY_MS}ms cubic-bezier(.2,.8,.2,1), opacity 120ms ease-out, width 150ms ease-out, height 150ms ease-out`;
+        }, APP_POP_MS);
+        openCloseTimers.push(t2);
+      }, i * APP_STAGGER_MS);
+      openCloseTimers.push(t);
+    });
+
+    const done = setTimeout(()=>{
+      isAnimating = false;
+      shell.style.transform = `rotate(0deg)`;
+      shell.style.transition = "none";
+      layout();
+    }, TOTAL_ANIM_MS);
+    openCloseTimers.push(done);
+  }
+
+  function closeShell(){
+    if(isAnimating || !isOpen) return;
+    isAnimating = true;
+    clearTimers();
+    cancelCoast();
+
+    shell.style.transition = `transform ${TOTAL_ANIM_MS}ms cubic-bezier(.2,.8,.2,1)`;
+    shell.style.transform = `rotate(-${OPEN_SPIN_DEG}deg)`;
+
+    // retract in descending index order (opposite sweep)
+    const order = [...apps].reverse();
+    order.forEach((a, i)=>{
+      const el = a.el;
+      const t = setTimeout(()=>{
+        el.style.transition = `transform ${APP_FLY_MS}ms ease-in, opacity ${APP_POP_MS}ms ease-in, width 150ms ease-in, height 150ms ease-in`;
+        el.style.opacity = "0";
+        el.style.width = "0px";
+        el.style.height = "0px";
+        el.style.transform = `translate(45px,45px) scale(0.2)`;
+      }, i * APP_STAGGER_MS);
+      openCloseTimers.push(t);
+    });
+
+    const done = setTimeout(()=>{
+      isAnimating = false;
+      isOpen = false;
+      shell.style.transform = `rotate(0deg)`;
+      shell.style.transition = "none";
+      // force-reset opacity guard so a future interrupted-close bug can't leave apps stuck invisible
+      apps.forEach(a=> a.el.style.opacity = "0");
+    }, TOTAL_ANIM_MS);
+    openCloseTimers.push(done);
+  }
+
+  shell.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    if(dragging) return;
+    if(isOpen) closeShell(); else openShell();
+  });
+
+  document.body.addEventListener("click", ()=>{
+    if(isOpen && !isAnimating && !dragging) closeShell();
+  });
+
+  resetBtn.addEventListener("click", ()=>{
+    if(isOpen && !isAnimating) closeShell();
+  });
+
+  // ---------- Circular drag gesture ----------
+  function getCenter(){
+    const rect = widgetRoot.getBoundingClientRect();
+    return { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+  }
+
+  function angleFromCenter(clientX, clientY){
+    const c = getCenter();
+    return Math.atan2(clientY - c.y, clientX - c.x) * 180/Math.PI;
+  }
+
+  function cancelCoast(){
+    if(coastRAF){ cancelAnimationFrame(coastRAF); coastRAF = null; }
+  }
+
+  function startDrag(clientX, clientY){
+    if(!isOpen) return;
+    // dragging always interrupts any running animation
+    isAnimating = false;
+    clearTimers();
+    cancelCoast();
+    // force-clear transitions so drag tracks 1:1 instantly (avoid eased/laggy drag bug)
+    shell.style.transition = "none";
+    apps.forEach(a=>{ a.el.style.transition = "none"; });
+
+    dragging = true;
+    dragStartAngle = angleFromCenter(clientX, clientY);
+    dragStartRotation = rotationDeg;
+    lastAngle = dragStartAngle;
+    lastMoveTime = performance.now();
+    angularVelocity = 0;
+  }
+
+  function moveDrag(clientX, clientY){
+    if(!dragging) return;
+    const now = performance.now();
+    const ang = angleFromCenter(clientX, clientY);
+    let delta = ang - lastAngle;
+    // normalize wrap-around
+    if(delta > 180) delta -= 360;
+    if(delta < -180) delta += 360;
+
+    const dt = Math.max(now - lastMoveTime, 1);
+    angularVelocity = (delta * DRAG_SENSITIVITY) / dt; // deg per ms
+
+    rotationDeg += delta * DRAG_SENSITIVITY;
+    lastAngle = ang;
+    lastMoveTime = now;
+    layout();
+  }
+
+  function endDrag(){
+    if(!dragging) return;
+    dragging = false;
+    // momentum coast: decay velocity naturally
+    let v = angularVelocity; // deg/ms
+    const friction = 0.95; // per frame decay
+    function step(){
+      v *= friction;
+      rotationDeg += v * 16; // approx frame time
+      layout();
+      if(Math.abs(v) > 0.002){
+        coastRAF = requestAnimationFrame(step);
+      } else {
+        coastRAF = null;
+      }
+    }
+    if(Math.abs(v) > 0.002){
+      coastRAF = requestAnimationFrame(step);
+    }
+  }
+
+  // Pointer events (mouse + touch unified)
+  dragCatcher.addEventListener("pointerdown", (e)=>{
+    e.stopPropagation();
+    dragCatcher.setPointerCapture(e.pointerId);
+    startDrag(e.clientX, e.clientY);
+  });
+  dragCatcher.addEventListener("pointermove", (e)=>{
+    if(dragging) moveDrag(e.clientX, e.clientY);
+  });
+  dragCatcher.addEventListener("pointerup", (e)=>{
+    endDrag();
+  });
+  dragCatcher.addEventListener("pointercancel", ()=>{
+    endDrag();
+  });
+  // Let taps on the shell itself still open/close (shell sits above catcher via z-index)
+
+  // Initial layout (apps hidden until opened)
+  layout();
+})();
+</script>
+</body>
+</html>

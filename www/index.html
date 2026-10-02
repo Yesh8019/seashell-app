@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seashell — centered, fixed 8-in/8-out</title>
+<style>
+  :root{ --nacre1:#ffe9d6; --nacre2:#ffd3e0; --nacre4:#e6d9ff; --mist:rgba(255,255,255,.55); }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
+  html,body{
+    margin:0; height:100%;
+    background: linear-gradient(160deg,#0b1f2e,#081521 60%,#040d15);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    color:#eaf3f8; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    touch-action:none;
+  }
+  #caption{ font-size:12px; color:var(--mist); margin-bottom:16px; text-align:center; max-width:300px; }
+
+  #home{
+    width:min(94vw,380px); height:min(80vh,600px);
+    background: linear-gradient(180deg,#0c2434,#081722);
+    border-radius:34px; position:relative; overflow:hidden;
+    box-shadow: 0 30px 70px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06);
+  }
+  .decoy{ position:absolute; width:54px; height:54px; border-radius:16px; background:rgba(255,255,255,.06); }
+  .decoy.d1{ top:22px; left:22px; } .decoy.d2{ top:22px; right:22px; }
+  .decoy.d3{ bottom:22px; left:22px; } .decoy.d4{ bottom:22px; right:22px; }
+
+  /* widget anchored at the true center of the screen, well clear of every edge */
+  #widget{ position:absolute; left:50%; top:50%; width:1px; height:1px; }
+
+  #shell{
+    position:absolute; left:0; top:0;
+    width:104px; height:104px; margin:-52px;
+    border-radius:24px; cursor:pointer;
+    transition: transform .5s cubic-bezier(.22,.85,.3,1.15);
+    box-shadow: 0 12px 26px rgba(0,0,0,.5), inset 0 0 22px rgba(255,255,255,.08);
+    background: radial-gradient(circle at 35% 28%, #fff8f0, var(--nacre1) 30%, var(--nacre2) 58%, var(--nacre4) 85%, #9a86c9 100%);
+  }
+  #widget.open #shell{ transform: scale(1.05); }
+  @keyframes shellSpin{
+    from{ transform: rotate(0deg) scale(1); }
+    to{ transform: rotate(720deg) scale(1.05); }
+  }
+  @keyframes shellSpinReverse{
+    from{ transform: rotate(0deg) scale(1.05); }
+    to{ transform: rotate(-720deg) scale(1); }
+  }
+  #shell.spinning{ animation: shellSpin .6s cubic-bezier(.3,.1,.2,1) 1; }
+  #shell.spinning-close{ animation: shellSpinReverse .6s cubic-bezier(.3,.1,.2,1) 1; }
+
+  /* generous invisible hit area around the origin — beads render inside it via
+     transform, but the drag-to-rotate gesture needs somewhere to land even in
+     the gaps between beads. Without an explicit size here the container has
+     zero area and drags starting off a bead fall through to the background. */
+  #chain{
+    position:absolute; left:-170px; top:-170px; width:340px; height:340px;
+    opacity:0; transition:opacity .3s ease; pointer-events:none;
+  }
+  #widget.open #chain{ opacity:1; pointer-events:auto; }
+
+  .bead{
+    position:absolute; left:50%; top:50%; width:28px; height:28px; margin:-14px;
+    border-radius:9px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:13px; font-weight:500; color:#0c1a22;
+    box-shadow: 0 5px 12px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.4);
+    cursor:pointer;
+  }
+  .bead.dot{ box-shadow:none; border: 2px solid rgba(255,255,255,.5); }
+  .bead.anim{
+    transition:
+      translate .3s cubic-bezier(.22,.85,.3,1.15) 30ms,
+      scale .22s cubic-bezier(.34,1.4,.64,1) 0ms,
+      opacity .2s ease 0ms;
+  }
+
+  #toast{
+    position:absolute; left:50%; bottom:20px; transform:translateX(-50%) translateY(14px);
+    background:rgba(10,25,35,.92); border:1px solid rgba(255,255,255,.12);
+    padding:8px 15px; border-radius:999px; font-size:12.5px; opacity:0;
+    transition:all .3s cubic-bezier(.2,.9,.3,1.2); white-space:nowrap; z-index:5;
+  }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div id="caption">Tap the shell — it spins open and the apps spill out. Always 8 expanded, the rest as dots.</div>
+
+<div id="home">
+  <div class="decoy d1"></div><div class="decoy d2"></div>
+  <div class="decoy d3"></div><div class="decoy d4"></div>
+  <div id="widget">
+    <div id="chain"></div>
+    <div id="shell"></div>
+  </div>
+  <div id="toast"></div>
+</div>
+
+<script>
+const APPS = [
+  {n:'Mail', c:'#ffb199'},{n:'Chat', c:'#8fd9c4'},{n:'Photo', c:'#ff9ecb'},
+  {n:'Maps', c:'#8ec9ff'},{n:'Tune', c:'#c6a8ff'},{n:'Note', c:'#ffe07a'},
+  {n:'Cam', c:'#8fe0a3'},{n:'Pay', c:'#ff9ecb'},{n:'Sun', c:'#7fd4ff'},
+  {n:'Cal', c:'#ffb870'},{n:'Docs', c:'#b0b6ff'},{n:'Run', c:'#7be89a'},
+  {n:'Web', c:'#8ec9ff'},{n:'Play', c:'#d9a3ff'},{n:'Shop', c:'#ffc98e'}
+];
+const N = APPS.length;
+const EXPANDED_COUNT = 8;
+const WINDOW_CENTER = 180;          // fixed absolute direction beads reveal toward
+
+// single ring around the shell — evenly spaced, radius sized so even two
+// full-size (40px) neighbors keep at least ~12px clearance between them
+const RING_RADIUS = 88;
+const LOCAL = [];
+for (let i=0;i<N;i++){
+  LOCAL.push({ angle: i * (360/N), radius: RING_RADIUS });
+}
+// descending sizes for rank 0 (closest to window center) .. rank 7 (8th, smallest expanded)
+const RANK_SIZE = [1, 0.93, 0.86, 0.79, 0.72, 0.65, 0.58, 0.5];
+const DOT_SIZE = 0.26;
+
+function norm180(a){ return ((a+180)%360+360)%360 - 180; }
+
+let rotationAngle = 0;
+let isOpen = false;
+let isAnimating = false; // true for the full duration of an open or close transition
+
+const widget = document.getElementById('widget');
+const chain = document.getElementById('chain');
+const shell = document.getElementById('shell');
+const toast = document.getElementById('toast');
+
+function showToast(msg){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> toast.classList.remove('show'), 1400);
+}
+
+function buildBeads(){
+  chain.innerHTML = '';
+  APPS.forEach((app,i)=>{
+    const el = document.createElement('div');
+    el.className = 'bead';
+    el.dataset.i = i;
+    el.style.background = app.c;
+    // start collapsed into the shell — the open animation grows/spreads these out
+    el.style.translate = '0px 0px';
+    el.style.scale = '0';
+    el.style.opacity = '0';
+    chain.appendChild(el);
+  });
+}
+
+function layout(){
+  // 1) compute every bead's current absolute angle under this rotation
+  const angles = LOCAL.map((l,i) => ({ i, angle: l.angle + rotationAngle }));
+  // 2) rank by distance to the fixed reveal direction — nearest 8 are expanded
+  const ranked = angles.slice().sort((a,b) =>
+    Math.abs(norm180(a.angle - WINDOW_CENTER)) - Math.abs(norm180(b.angle - WINDOW_CENTER))
+  );
+  const sizeByIndex = {};
+  ranked.forEach((r, rank) => {
+    sizeByIndex[r.i] = rank < EXPANDED_COUNT ? RANK_SIZE[rank] : DOT_SIZE;
+  });
+
+  const beads = chain.children;
+  for (let idx=0; idx<beads.length; idx++){
+    const el = beads[idx];
+    const i = +el.dataset.i;
+    const local = LOCAL[i];
+    const angle = local.angle + rotationAngle;
+    const rad = angle * Math.PI/180;
+    const x = Math.cos(rad) * local.radius;
+    const y = -Math.sin(rad) * local.radius;
+    const scale = sizeByIndex[i];
+    const isDot = scale <= DOT_SIZE + 0.001;
+
+    el.style.translate = `${x}px ${y}px`;
+    el.style.scale = String(scale);
+    el.style.opacity = '1';
+    el.style.zIndex = Math.round(scale*100);
+    el.classList.toggle('dot', isDot);
+    el.textContent = isDot ? '' : APPS[i].n[0];
+  }
+}
+
+let openTimer1=null, openTimer2=null, closeTimer=null;
+const STEP_MS = 30;                       // gap between one app launching and the next
+const STAGGER_MAX = (N-1) * STEP_MS;      // longest per-bead transition-delay
+const EMERGE_MS = STAGGER_MAX + 370;      // enough time for the slowest bead to finish (30ms delay + 300ms travel + buffer)
+const SHELL_SPIN_MS = EMERGE_MS + 110;    // shell spin runs a bit longer than the apps, so they finish first
+
+function clearAllTimers(){
+  clearTimeout(openTimer1); clearTimeout(openTimer2); clearTimeout(closeTimer);
+}
+
+function openWidget(){
+  if (isOpen || isAnimating) return;
+  clearAllTimers();
+  isOpen = true;
+  isAnimating = true;
+  widget.classList.add('open');
+
+  shell.classList.remove('spinning-close');
+  shell.style.animationDuration = `${SHELL_SPIN_MS}ms`;
+  shell.classList.add('spinning');
+  openTimer1 = setTimeout(()=>{
+    shell.classList.remove('spinning');
+    isAnimating = false;
+  }, SHELL_SPIN_MS + 20);
+
+  const beads = [...chain.children];
+  beads.forEach(el => {
+    const i = +el.dataset.i;
+    el.style.transition = '';
+    el.style.transitionDelay = `${i * STEP_MS}ms`;   // clockwise sweep: 0,1,2...N-1
+    el.classList.add('anim');
+  });
+  layout(); // beads transition from the collapsed center out to the ring, one after another
+  openTimer2 = setTimeout(()=>{
+    beads.forEach(el => el.classList.remove('anim'));
+  }, EMERGE_MS);
+}
+
+function closeWidget(){
+  if (!isOpen || isAnimating) return;
+  clearAllTimers();
+  stopInertia();
+  isOpen = false;
+  isAnimating = true;
+
+  shell.classList.remove('spinning');
+  shell.style.animationDuration = `${SHELL_SPIN_MS}ms`;
+  shell.classList.add('spinning-close');
+
+  const beads = [...chain.children];
+  beads.forEach(el => {
+    const i = +el.dataset.i;
+    el.style.transition = '';
+    el.style.transitionDelay = `${(N - 1 - i) * STEP_MS}ms`;   // anticlockwise sweep: N-1,...,1,0
+    el.classList.add('anim');
+    el.style.translate = '0px 0px';
+    el.style.scale = '0';
+    el.style.opacity = '0';
+  });
+  closeTimer = setTimeout(()=>{
+    widget.classList.remove('open');
+    shell.classList.remove('spinning-close');
+    beads.forEach(el => { el.classList.remove('anim'); el.style.opacity = ''; });
+    isAnimating = false;
+  }, SHELL_SPIN_MS + 20);
+}
+
+shell.addEventListener('pointerdown', (e)=> e.stopPropagation());
+shell.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  if (isAnimating) return; // ignore taps entirely while opening or closing
+  isOpen ? closeWidget() : openWidget();
+});
+
+document.addEventListener('pointerdown', (e)=>{
+  if (isOpen && !isAnimating && !e.target.closest('#widget')) closeWidget();
+});
+
+// circular drag — clamped to a small rotation range
+let rotDrag = null, rafPending = false, lastMoveEvent = null;
+const DRAG_SENSITIVITY = 1.8;
+chain.addEventListener('pointerdown', (e)=>{
+  e.stopPropagation();
+  if (!isOpen) return;
+  // starting a drag always wins — kill any pending open/close transition,
+  // via both the class AND an inline override, so this is unambiguously instant.
+  clearAllTimers();
+  isAnimating = false;
+  shell.classList.remove('spinning','spinning-close');
+  [...chain.children].forEach(el => { el.classList.remove('anim'); el.style.transition = 'none'; });
+
+  const rect = shell.getBoundingClientRect();
+  const cx = rect.left+rect.width/2, cy = rect.top+rect.height/2;
+  rotDrag = { cx, cy, lastAngle: Math.atan2(-(e.clientY-cy), e.clientX-cx)*180/Math.PI,
+              downX:e.clientX, downY:e.clientY, target:e.target.closest('.bead'), pointerId:e.pointerId,
+              lastTime: performance.now(), velocity: 0 };
+  chain.setPointerCapture(e.pointerId);
+  stopInertia(); // a new drag always takes over from any ongoing coast
+});
+chain.addEventListener('pointermove', (e)=>{
+  if (!rotDrag) return;
+  lastMoveEvent = e;
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(()=>{
+    rafPending = false;
+    if (!rotDrag || !lastMoveEvent) return;
+    const ev = lastMoveEvent;
+    const a = Math.atan2(-(ev.clientY-rotDrag.cy), ev.clientX-rotDrag.cx)*180/Math.PI;
+    let delta = a - rotDrag.lastAngle;
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    rotDrag.lastAngle = a;
+    rotDrag.moved = rotDrag.moved || Math.hypot(ev.clientX-rotDrag.downX, ev.clientY-rotDrag.downY) > 6;
+    if (!rotDrag.moved) return;
+
+    const now = performance.now();
+    const dt = Math.max(1, now - rotDrag.lastTime);
+    rotDrag.velocity = (delta * DRAG_SENSITIVITY) / dt; // degrees per ms, most recent motion
+    rotDrag.lastTime = now;
+
+    rotationAngle += delta * DRAG_SENSITIVITY;
+    layout();
+  });
+});
+let inertiaRAF = null;
+function stopInertia(){
+  if (inertiaRAF) cancelAnimationFrame(inertiaRAF);
+  inertiaRAF = null;
+}
+function startInertia(velocity){
+  const FRICTION = 0.88;      // per-frame decay — lower = stops sooner
+  const MIN_VELOCITY = 0.006; // degrees/ms below which we just stop
+  let v = velocity;
+  let lastT = performance.now();
+  function step(now){
+    const dt = Math.min(48, now - lastT); // clamp in case of a dropped frame
+    lastT = now;
+    if (!isOpen || Math.abs(v) < MIN_VELOCITY) { inertiaRAF = null; return; }
+    rotationAngle += v * dt;
+    layout();
+    v *= Math.pow(FRICTION, dt / 16); // frame-rate independent decay
+    inertiaRAF = requestAnimationFrame(step);
+  }
+  inertiaRAF = requestAnimationFrame(step);
+}
+
+function endRotDrag(e){
+  if (!rotDrag) return;
+  e && e.stopPropagation();
+  const wasTap = !rotDrag.moved;
+  const tapTarget = rotDrag.target;
+  const pid = rotDrag.pointerId;
+  const velocity = rotDrag.velocity || 0;
+  rotDrag = null;
+  try{ chain.releasePointerCapture(pid); }catch(err){}
+  if (wasTap && tapTarget){
+    const scaleNow = parseFloat(tapTarget.style.scale || 0);
+    if (scaleNow > DOT_SIZE + 0.05){
+      showToast(`Opening ${APPS[+tapTarget.dataset.i].n}`);
+    }
+  } else if (Math.abs(velocity) > 0.01){
+    startInertia(velocity);
+  }
+}
+chain.addEventListener('pointerup', endRotDrag);
+chain.addEventListener('pointercancel', endRotDrag);
+
+buildBeads();
+</script>
+</body>
+</html>

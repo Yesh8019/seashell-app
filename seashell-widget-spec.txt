@@ -1,0 +1,80 @@
+# Seashell App Folder Widget — Design & Implementation Reference
+
+This document captures the complete, current state of a mobile home-screen widget concept: a seashell-shaped "folder" that holds up to 15 apps, opens with a spin, and lets the user browse through the apps with a circular drag gesture. It reflects every decision made during design iteration, including things that were tried and explicitly rejected, so a future session (with this assistant or another) can pick up with full context without re-deriving anything.
+
+A working HTML/JS prototype implementing everything below has already been built and refined through many rounds of feedback. If you have that file, treat it as the source of truth for exact numbers — this document explains *why* those numbers and behaviors exist.
+
+---
+
+## 1. Core concept
+
+A widget on the mobile home screen, shaped like a seashell, that acts as a folder holding **up to 15 apps**. Tapping it opens it in place (no popup/overlay layer) — the apps emerge directly from and around the widget itself. A circular drag gesture lets the user browse through all 15 apps, of which **exactly 8 are shown "expanded" (clickable, full size) at any moment**, with the rest shown as small colored indicator dots.
+
+## 2. Rejected directions (for context — don't re-propose these)
+
+Several earlier concepts were explored and explicitly moved away from:
+
+- **Popup/overlay layer** — apps appearing in a floating layer on top of the screen. Rejected: apps must expand in place from the widget itself.
+- **Full spiral/nautilus layout** (radius growing per app index, mimicking a real shell's whorl) — caused apps to overlap badly near the shell and made rotation hard to perceive. Replaced with a single evenly-spaced ring.
+- **"Chain" / trailing bead layout** (apps trailing off outside the shell in a curling line, per a hand-drawn reference sketch) — two gesture variants were prototyped:
+  - **Variant A**: the curl's path stays fixed in space; apps slide along it as you drag.
+  - **Variant B**: the whole curl rotates rigidly around the shell, like a clock hand.
+  - **Variant B was chosen** as the preferred mechanic, but the trailing-chain *shape* itself was later abandoned in favor of a full evenly-spaced ring (below), which kept variant B's rotation mechanic but arranged all 15 apps in a circle instead of a partial trailing curl.
+- **Circular apps and circular shell** — changed to **rounded squares** per explicit request.
+- **Drag-to-center to clear an app's cache before opening** — was designed (drag or swipe an app to the widget's center clears its cache, then opens it) but then explicitly **parked / deprioritized**, not part of the current build.
+- **Soft/partial "how many apps are expanded" blending** — an earlier version let the expanded count blend continuously (e.g., some apps at 60% size). This was replaced by a **hard rule: always exactly 8 expanded, 7 as dots**, with a clean step between the two states (no in-between sizes).
+- **Rotary-phone-style spring-back gesture** (drag to a stop, release, and it snaps back like an old phone dial) — considered but explicitly rejected in favor of a **direct 1:1-ish drag** that holds wherever it's released (see §5).
+
+## 3. Locked visual & interaction spec
+
+| Element | Behavior |
+|---|---|
+| Shell shape | Rounded square (not circle), pearlescent/nacre-style gradient fill |
+| App shape | Rounded square (not circle) |
+| Widget placement | Should sit with enough clearance that its ring never gets clipped by a screen edge — even a corner-placed widget needs this margin. Direction of any future asymmetric layout is **parked at "left" by default** (see §7) |
+| App layout | Single ring, evenly spaced around the shell (360° / 15 apps ≈ 24° apart) |
+| Expanded apps | **Always exactly 8**, sized in descending order — the app angularly closest to a fixed "reveal window" direction is biggest, down to the 8th (smallest expanded) |
+| Dot apps | The remaining 7, shown as small colored dots (color = each app's own brand/icon color) |
+| Distance from shell to nearest app | Tight but not cramped — reduced twice during iteration per feedback |
+| Distance between adjacent apps | At least ~10px clearance even in the worst case (two full-size apps adjacent) — also reduced slightly per feedback, but never allowed to overlap |
+
+## 4. Opening / closing animation
+
+This went through several iterations; the final agreed behavior:
+
+- **Opening**: tap the shell → the shell **spins clockwise** in place (currently tuned to **two full rotations, 720°**, per explicit preference — "spins twice but fast" was tested and liked) while all 15 apps **launch out from the shell's center one after another**, not simultaneously:
+  - Apps launch in **ascending index order**, which corresponds to a **clockwise sweep** around the ring.
+  - Each app's own motion is split into two independently-timed parts for a clearer "bursting out" feel: it **pops/scales up quickly at the center first**, then, a beat later, **translates outward** to its resting position on the ring. (This requires animating CSS `scale` and `translate` as separate properties with separate timing functions — animating a single combined `transform` made both happen in lockstep and looked more like "fade and drift" than "burst and fly out.")
+  - The **entire staggered app cascade finishes before the shell's spin completes** — the shell's spin duration is deliberately set a bit longer than the total app animation time, specifically so the apps are never still moving after the shell has visually settled.
+- **Closing**: triggered by tapping the shell again (it now acts as its own close button once open) or tapping anywhere outside the widget. The shell **spins anticlockwise** (mirroring the open), and apps **retract into the center one after another in descending index order** — i.e., the retraction sweep travels in the **opposite rotational direction** from the opening sweep, matching the anticlockwise spin.
+- **Total duration**: tuned down from an initial ~3 seconds to **about 0.9 seconds** for the full open-or-close sequence, per explicit "make it ~1 second" feedback.
+- **Taps are ignored entirely while an open or close animation is in progress** (an `isAnimating`-style flag), *except* that starting a new drag gesture always interrupts and instantly cancels whatever animation is running — dragging takes priority over animation state.
+
+## 5. Circular drag gesture (browsing the 15 apps)
+
+- Dragging in a circular motion anywhere around the widget rotates which 8 of the 15 apps are currently "expanded" vs. dots. The rotation is continuous and can go all the way around (**no artificial limit** — an early version clamped rotation to a small range and that was identified as a bug/wrong call; it was removed so all 15 apps are always reachable).
+- **Release behavior**: the layout holds **exactly where the finger released** — there is no snap-to-nearest-step. (The only micro-adjustment allowed is per-app: if an individual app happened to be frozen in a visually ambiguous in-between size at release, it's fine to nudge *that app* cleanly to its nearest clean state. This mattered more under the old soft-blend design; under the current hard 8-in/7-out rule there generally isn't a lingering ambiguous state to resolve.)
+- **Sensitivity**: how much rotation results from a given finger movement is tunable and was iterated live: tried 1x, then boosted to 4x (too much/uncontrolled), settled down through 2.2x, and **landed on 1.8x** as the final feel.
+- **Momentum/inertia**: added per explicit request — releasing the drag while it's still moving lets the rotation **coast and decay naturally** rather than stopping dead the instant the finger lifts. A fast flick coasts noticeably further than a slow drag. Starting a new drag, or closing the widget, immediately cancels any in-progress coast.
+- Tapping a fully-expanded app opens it. Tapping a dot or a mid-transition app does nothing (only recognized once it's genuinely at full expanded size).
+
+## 6. Things that were debugged along the way (avoid reintroducing)
+
+These are documented so a rebuild doesn't reintroduce the same bugs:
+
+- **Duplicate `id` attributes on the same element** — browsers silently keep only one `id`, so `getElementById` for the dropped one returns `null` and throws on use. Watch for this especially when quickly relabeling elements.
+- **A zero-sized invisible drag-catcher** — the element meant to catch circular-drag gestures needs an explicit generous width/height. If it's sized to exactly the origin point (e.g., a 1×1px anchor), drags starting in the *gaps* between apps (not directly on an app) fall through to whatever's behind them — which, combined with "tap outside closes the widget," caused the widget to close instead of rotating.
+- **CSS transition classes left lingering** — if a "this element should animate" class isn't reliably removed (or is removed on a timer that races against user input), a drag started while that class is still active gets *eased* instead of applied instantly, which feels like laggy, delayed tracking rather than 1:1 finger following. Fix: force-clear both the class **and** an inline `transition: none` override the instant a drag starts, and be careful to reset that inline override before the next intentional animation, or the next open/close animation silently stops working.
+- **Opacity getting permanently stuck at 0** — an early version set an app's opacity to `0` at the *start* of the close animation and only reset it back to `1` in a delayed callback once the close fully finished. If a close was interrupted by a quick reopen, that delayed reset never ran, silently leaving apps invisible forever after (while the shell kept spinning normally, making it look like "it just spins, nothing shows"). Fix: the layout function that positions apps should also unconditionally force full opacity every time it runs, so there's no code path where a stale `0` can survive an interruption.
+- **Rapid repeated taps corrupting animation state** — toggling open/close many times faster than the animation duration can leave things in an inconsistent state if timers aren't tracked and cleared properly. Fix: a single `isAnimating` flag blocks essentially all taps for the entire duration of whichever transition is running, and every timer is stored and explicitly cleared before starting a new one.
+
+## 7. Parked for future iteration (not forgotten, just deprioritized)
+
+- **Chain/widget direction auto-detection**: whether the widget should automatically detect it's near a screen edge and orient itself accordingly, vs. the user manually choosing a placement/direction. Currently fixed to "left" as a default; this decision was explicitly deferred, not finalized.
+- **Drag-to-center to clear cache and reopen an app fresh**: designed in early concept discussion (drag or swipe an individual app into the widget's center to clear that app's cache before it opens) but explicitly parked and not part of the current interaction model.
+
+## 8. Suggested next steps (not yet started)
+
+- Feasibility check of implementing this as an actual OS-level home-screen widget on Android (custom shapes, gesture handling within widget sandboxes, and whether a circular drag gesture is even deliverable inside Android's widget framework vs. requiring a companion app/launcher).
+- Deciding on real icon treatment (currently placeholder colored squares with a single letter — real implementation would use each app's actual icon).
+- Deciding whether "8 expanded / 7 dots" should be configurable per user preference or device size, or stay fixed.

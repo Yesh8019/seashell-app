@@ -1,0 +1,21 @@
+node_modules/
+www/node_modules/
+
+# Android build outputs and caches
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+*.iml
+.idea/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Env/secrets (none should ever be committed)
+.env

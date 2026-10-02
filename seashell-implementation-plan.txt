@@ -1,0 +1,87 @@
+# Seashell Widget — Implementation Plan & Architecture Reference
+
+This is a companion document to `seashell-widget-spec.md` (which covers the visual/interaction design). This one covers **how we're actually going to build and run it**, given real-world constraints (a locked-down company machine, no desire to publish publicly, wanting multiple independent shells on the home screen). Nothing described here has been built yet — this is the agreed plan.
+
+---
+
+## 1. The core platform reality (read this first)
+
+Android's real home-screen "App Widget" system can only show static/simple layouts and basic taps — it **cannot** run our custom drag gestures, spin animation, or staggered app-launch cascade. This is a hard OS limitation, not a skill or tooling gap.
+
+**Chosen workaround**: a small, real Android App Widget acts purely as a **launcher icon** on the home screen. Tapping it opens a **full-screen experience** (not a floating overlay) that contains the entire seashell interaction exactly as prototyped. So:
+
+- What sits permanently on the home screen: a small static shell icon (a real widget)
+- What happens on tap: the full interactive experience launches full-screen, behaves exactly like our HTML/JS prototype, then closes back to the home screen
+
+This is the accepted trade-off for v1 — it is not a "floating widget that opens in place over your wallpaper," it's "tap an icon, get the full experience, close it."
+
+## 2. Multiple shells decision: Option B (chosen)
+
+We want **multiple independent shells**, each living as its **own separate widget icon** on the home screen — not one app with a shell-picker screen inside it. This maps onto Android's existing **"configurable App Widget"** pattern:
+
+1. User long-presses home screen → adds our widget → can drop as many separate copies as they want
+2. **The instant a new copy is placed**, Android automatically opens a small configuration screen (ours to design) asking "which shell is this?" — pick an existing one or create a new one
+3. That choice is saved **per widget instance** (Android assigns each placed widget instance a unique ID specifically for this purpose)
+4. Each shell icon on the home screen independently shows and remembers its own set of up to 15 apps
+5. Tapping any one launches the full-screen experience preloaded with that specific shell's apps
+
+### What this adds to the build, beyond the core interaction
+- **A configuration screen** — shown automatically when a widget is placed; lets the user pick an existing shell or create a new one
+- **A create/edit-shell screen** — lets the user actually choose which real installed apps go into a given shell (not yet designed)
+- **A local data store** — maps "this specific widget instance" → "this shell" → "these 15 apps," persisted on-device (standard local storage, nothing exotic)
+- **No central "manage all my shells" screen** in v1 (each shell is only reachable/editable via its own widget) — flagged as a possible future addition, not required now
+
+## 3. Tech stack decision
+
+| Piece | Choice | Why |
+|---|---|---|
+| UI implementation | **Reuse the existing HTML/CSS/JS prototype**, wrapped as a real app | We already built and fully tuned the interaction — rewriting it natively would throw away that work for no real benefit at this stage |
+| Wrapping tool | **Capacitor** | Takes a web-based UI and packages it into a real installable Android app; installs via `npm install` into a project folder, no admin rights or system-wide install needed |
+| Build environment | **GitHub Actions (cloud)**, not local Android Studio/SDK | The company machine can't have the heavy Android SDK/JDK/Gradle installed locally; GitHub's free build runners do that work instead, producing a downloadable `.apk` |
+| Distribution | **Sideloading only** — no Play Store | This is a personal-use v1; publishing isn't a goal right now |
+
+## 4. Confirmed prerequisites (as of last check)
+
+| Requirement | Status |
+|---|---|
+| Node.js | ✅ Already installed |
+| VSCode | ✅ Already installed |
+| Git | ✅ Confirmed available |
+| Capacitor | Not yet installed — will be added via `npm install` in the project folder (no admin rights needed) |
+| GitHub account | Needed — free tier is sufficient |
+| Android phone | Needed for sideloading the final `.apk`; requires enabling "install unknown apps" once |
+
+## 5. Known trade-offs (agreed to, going in with eyes open)
+
+- **Not a true always-on-homescreen widget** — it's an icon that launches a full-screen app (see §1)
+- **Runs in a WebView**, not fully native UI — should feel close to our tuned prototype but potentially a notch less crisp than native, especially on older phones; slightly higher memory/battery use than a purely native equivalent
+- **No auto-updates** — every change requires: rebuild via GitHub Actions → download new `.apk` → manually reinstall on the phone
+- **Repeated "unknown source" install warnings** — normal and expected for sideloading, not a red flag, just a recurring speed bump
+- **`<queries>` manifest permission needed** to see/launch other installed apps — standard for this kind of app, low-risk, but one more piece of Android manifest configuration to get right
+- **Cloud build debugging is slower than local** — troubleshooting a failed GitHub Actions build means reading logs remotely rather than seeing errors instantly in a local terminal
+- **Each shell needs manual placement** — since there's no central "add a new shell" management screen in v1, adding another shell means going through the normal "add widget to home screen" flow again each time
+- **Free GitHub Actions tier is generous but not unlimited** — a non-issue at our expected usage, but worth knowing if rebuilds become very frequent
+
+## 6. Step-by-step plan (nothing started yet)
+
+1. Organize the existing HTML/CSS/JS prototype into a proper small project folder structure
+2. Run `npm install` to add Capacitor to that project
+3. Push the project to a new GitHub repository
+4. Add a GitHub Actions workflow file that installs Android build tools in the cloud and compiles an `.apk`
+5. Trigger the workflow, download the resulting `.apk`
+6. Sideload it onto the Android phone (enabling "install unknown apps" once) and confirm the core single-shell experience runs correctly as a real app
+7. Add the **App Widget** wrapper — the small static launcher icon and its manifest registration
+8. Build the **configuration screen** (shown on widget placement) — pick existing shell or create new
+9. Build the **create/edit-shell screen** — choose which real installed apps populate a shell's 15 slots
+10. Add the **local data store** mapping widget instance → shell → app list
+11. Replace the prototype's toast placeholders with real app-launching (using Android's installed-apps APIs), governed by the `<queries>` manifest permission
+12. Test placing multiple separate widget instances, each configured to a different shell, and confirm they behave independently
+13. Iterate/rebuild via the same GitHub Actions → download → reinstall loop as needed
+
+## 7. Open questions / not yet decided
+
+- Should there be a way to **edit an existing shell's app list later** (not just at creation), and if so, how is that screen reached — via a long-press on the widget, or an "edit" affordance somewhere in the full-screen view?
+- Should shells have **names or colors** to distinguish them at a glance while picking/creating, or is the app selection itself enough?
+- Is a future **"manage all shells"** screen worth adding once there are several, or does per-widget-only access stay fine indefinitely?
+
+These aren't blockers — just things to decide once we're actually building the configuration/create-shell screens, not before.

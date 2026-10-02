@@ -2,7 +2,9 @@ package com.seashell.app;
 
 import android.app.WallpaperManager;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.LayerDrawable;
 import android.os.Bundle;
 import android.view.WindowManager;
 import com.getcapacitor.BridgeActivity;
@@ -32,7 +34,17 @@ public class MainActivity extends BridgeActivity {
             WallpaperManager wm = WallpaperManager.getInstance(this);
             Drawable wallpaperDrawable = wm.getDrawable();
             if (wallpaperDrawable != null) {
-                getWindow().setBackgroundDrawable(wallpaperDrawable);
+                // Dim/frost the wallpaper by layering a semi-transparent black
+                // scrim on top of it, so the shell UI has better contrast and
+                // feels like it's floating over a dimmed backdrop rather than
+                // the fully bright raw wallpaper. Adjust the alpha below
+                // (0-255) to taste: higher = darker/more opaque.
+                ColorDrawable scrim = new ColorDrawable(Color.BLACK);
+                scrim.setAlpha(110); // ~43% dark overlay
+                LayerDrawable dimmedWallpaper = new LayerDrawable(
+                    new Drawable[]{ wallpaperDrawable, scrim }
+                );
+                getWindow().setBackgroundDrawable(dimmedWallpaper);
             }
         } catch (Exception ex) {
             // If this fails for any reason (missing permission on some OEMs,

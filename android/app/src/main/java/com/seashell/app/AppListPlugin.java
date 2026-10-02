@@ -92,6 +92,22 @@ public class AppListPlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * Sends this app to the background exactly like pressing the device's
+     * Home button, instead of destroying/finishing the Activity. Used when
+     * the user taps the shell to close it without picking an app — the
+     * collapse animation plays first (in JS), then this is called so the
+     * user lands back on their real home screen rather than being left
+     * sitting on our closed-but-still-foregrounded shell screen.
+     */
+    @PluginMethod
+    public void exitToHome(PluginCall call) {
+        if (getActivity() != null) {
+            getActivity().moveTaskToBack(true);
+        }
+        call.resolve();
+    }
+
     private String drawableToBase64(Drawable drawable) {
         Bitmap bitmap;
         if (drawable instanceof android.graphics.drawable.BitmapDrawable) {

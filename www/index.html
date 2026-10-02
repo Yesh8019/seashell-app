@@ -311,7 +311,7 @@ function openWidget(){
   }, EMERGE_MS);
 }
 
-function closeWidget(){
+function closeWidget(exitAfter){
   if (!isOpen || isAnimating) return;
   clearAllTimers();
   stopInertia();
@@ -337,18 +337,59 @@ function closeWidget(){
     shell.classList.remove('spinning-close');
     beads.forEach(el => { el.classList.remove('anim'); el.style.opacity = ''; });
     isAnimating = false;
+    // If the shell was closed without picking an app (tapped the shell
+    // itself, or tapped outside it), send the app to the background —
+    // like pressing Home — once the collapse animation finishes, instead
+    // of leaving the user sitting on our closed-but-still-foregrounded
+    // shell screen.
+    if (exitAfter) exitToHome();
   }, SHELL_SPIN_MS + 20);
+}
+
+/**
+ * Resets the shell straight to its closed, collapsed-at-rest visual state
+ * with no animation — used when the app resumes (home button / recents /
+ * cold start) so it never starts up visibly "open" from a previous session.
+ */
+function resetToClosedInstant(){
+  clearAllTimers();
+  stopInertia();
+  isOpen = false;
+  isAnimating = false;
+  widget.classList.remove('open');
+  shell.classList.remove('spinning', 'spinning-close');
+  const beads = [...chain.children];
+  beads.forEach(el => {
+    el.classList.remove('anim');
+    el.style.transition = 'none';
+    el.style.translate = '0px 0px';
+    el.style.scale = '0';
+    el.style.opacity = '0';
+  });
+  // force layout flush so the next openWidget() call picks up fresh styles
+  void chain.offsetHeight;
+  beads.forEach(el => { el.style.transition = ''; });
+}
+
+/** Sends the app to background (like pressing Home) via the native plugin. */
+async function exitToHome(){
+  if (!window.Capacitor || !window.Capacitor.Plugins || !window.Capacitor.Plugins.AppList) return;
+  try {
+    await window.Capacitor.Plugins.AppList.exitToHome();
+  } catch (err) {
+    console.warn('exitToHome failed:', err);
+  }
 }
 
 shell.addEventListener('pointerdown', (e)=> e.stopPropagation());
 shell.addEventListener('click', (e)=>{
   e.stopPropagation();
   if (isAnimating) return; // ignore taps entirely while opening or closing
-  isOpen ? closeWidget() : openWidget();
+  isOpen ? closeWidget(true) : openWidget();
 });
 
 document.addEventListener('pointerdown', (e)=>{
-  if (isOpen && !isAnimating && !e.target.closest('#widget')) closeWidget();
+  if (isOpen && !isAnimating && !e.target.closest('#widget')) closeWidget(true);
 });
 
 // circular drag — clamped to a small rotation range
@@ -462,6 +503,17 @@ async function launchRealApp(app){
 
 buildBeads();
 loadRealIcons();
+
+// Always resume in the closed state, never visibly "open" from a previous
+// session — covers both pressing Home and returning via Recents, since
+// Android keeps this Activity (and its WebView/JS state) alive in the
+// background rather than destroying it, so without this the shell would
+// otherwise still be showing however it was left.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    resetToClosedInstant();
+  }
+});
 </script>
 </body>
 </html>

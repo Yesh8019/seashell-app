@@ -49,4 +49,8 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Some OEM skins require this to read the wallpaper via WallpaperManager
+         on older Android versions; harmless no-op on versions/devices that
+         don't need it, scoped out entirely above API 32 via maxSdkVersion. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 </manifest>

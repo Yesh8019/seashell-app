@@ -13,10 +13,21 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Transparent window so the WebView's own (transparent) background
+             shows through to whatever is behind this Activity, instead of a
+             solid system-default color. Combined with the WebView background
+             being set transparent in MainActivity and the HTML body having no
+             opaque background, this is what lets the shell appear to float
+             without a visible "app window" behind it. -->
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowContentOverlay">@null</item>
     </style>
 
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="android:windowAnimationStyle">@null</item>
     </style>
 </resources>

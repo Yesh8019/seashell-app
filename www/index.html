@@ -9,7 +9,16 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
   html,body{
     margin:0; height:100%;
-    background: linear-gradient(160deg,#0b1f2e,#081521 60%,#040d15);
+    /* Transparent instead of the old dark gradient — lets the native
+       transparent window (see MainActivity.java / styles.xml) show through
+       instead of covering it with an opaque "app background" color. The
+       mock phone-frame/decoys below are now hidden for the same reason:
+       on a real device there is no simulated home screen to draw, only the
+       real transparent window background (which renders as black, since a
+       separate app cannot read another app's/launcher's screen — that full
+       "floats over your real wallpaper" effect needs the native App Widget
+       wrapper planned for later). */
+    background: transparent;
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     color:#eaf3f8; display:flex; flex-direction:column; align-items:center; justify-content:center;
     touch-action:none;
@@ -18,13 +27,10 @@
 
   #home{
     width:min(94vw,380px); height:min(80vh,600px);
-    background: linear-gradient(180deg,#0c2434,#081722);
-    border-radius:34px; position:relative; overflow:hidden;
-    box-shadow: 0 30px 70px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06);
+    background: transparent;
+    position:relative; overflow:visible;
   }
-  .decoy{ position:absolute; width:54px; height:54px; border-radius:16px; background:rgba(255,255,255,.06); }
-  .decoy.d1{ top:22px; left:22px; } .decoy.d2{ top:22px; right:22px; }
-  .decoy.d3{ bottom:22px; left:22px; } .decoy.d4{ bottom:22px; right:22px; }
+  .decoy{ display:none; }
 
   /* widget anchored at the true center of the screen, well clear of every edge */
   #widget{ position:absolute; left:50%; top:50%; width:1px; height:1px; }
@@ -66,6 +72,10 @@
     font-size:13px; font-weight:500; color:#0c1a22;
     box-shadow: 0 5px 12px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.4);
     cursor:pointer;
+    overflow:hidden;
+  }
+  .bead img{
+    width:100%; height:100%; object-fit:cover; pointer-events:none;
   }
   .bead.dot{ box-shadow:none; border: 2px solid rgba(255,255,255,.5); }
   .bead.anim{
@@ -99,12 +109,26 @@
 </div>
 
 <script>
+// Real installed apps to populate the shell. Labels/colors here are fallbacks
+// used until the native AppList plugin returns each app's actual icon (see
+// loadRealIcons() below) — once that resolves, icon/label are replaced with
+// the real ones read from the device via PackageManager.
 const APPS = [
-  {n:'Mail', c:'#ffb199'},{n:'Chat', c:'#8fd9c4'},{n:'Photo', c:'#ff9ecb'},
-  {n:'Maps', c:'#8ec9ff'},{n:'Tune', c:'#c6a8ff'},{n:'Note', c:'#ffe07a'},
-  {n:'Cam', c:'#8fe0a3'},{n:'Pay', c:'#ff9ecb'},{n:'Sun', c:'#7fd4ff'},
-  {n:'Cal', c:'#ffb870'},{n:'Docs', c:'#b0b6ff'},{n:'Run', c:'#7be89a'},
-  {n:'Web', c:'#8ec9ff'},{n:'Play', c:'#d9a3ff'},{n:'Shop', c:'#ffc98e'}
+  {n:'Play Store',          pkg:'com.android.vending',                   c:'#4D96FF'},
+  {n:'Chrome',               pkg:'com.android.chrome',                    c:'#FFD93D'},
+  {n:'Drive',                pkg:'com.google.android.apps.docs',          c:'#6BCB77'},
+  {n:'Gmail',                pkg:'com.google.android.gm',                 c:'#FF6B6B'},
+  {n:'Lens',                 pkg:'com.google.ar.lens',                    c:'#9D65C9'},
+  {n:'Maps',                 pkg:'com.google.android.apps.maps',          c:'#2EC4B6'},
+  {n:'YouTube',              pkg:'com.google.android.youtube',            c:'#E71D36'},
+  {n:'Photos',               pkg:'com.google.android.apps.photos',        c:'#FDB833'},
+  {n:'Calendar',             pkg:'com.google.android.calendar',           c:'#3A86FF'},
+  {n:'LinkedIn',             pkg:'com.linkedin.android',                  c:'#0A66C2'},
+  {n:'IRCTC RailConnect',    pkg:'cris.org.in.prs.ima',                   c:'#FF9F1C'},
+  {n:'Where is my train',    pkg:'com.whereismytrain.android',            c:'#06D6A0'},
+  {n:'RailOne',              pkg:'cris.org.railone',                      c:'#F72585'},
+  {n:'Google',               pkg:'com.google.android.googlequicksearchbox', c:'#8338EC'},
+  {n:'Lock',                 pkg:'com.android.bbk.lockscreen3',           c:'#FB5607'}
 ];
 const N = APPS.length;
 const EXPANDED_COUNT = 8;
@@ -154,6 +178,55 @@ function buildBeads(){
   });
 }
 
+/**
+ * Fetches every installed app's real icon/label via the native AppList
+ * plugin, then updates APPS in place (matched by package name) and
+ * re-renders the beads so the shell shows real icons instead of the
+ * fallback colored-letter placeholders. Safe to call once at startup;
+ * silently leaves fallbacks in place if the plugin isn't available
+ * (e.g. running in a plain browser instead of the native app).
+ */
+async function loadRealIcons(){
+  if (!window.Capacitor || !window.Capacitor.Plugins || !window.Capacitor.Plugins.AppList) {
+    return; // not running inside the native app — keep fallback placeholders
+  }
+  try {
+    const { apps: installed } = await window.Capacitor.Plugins.AppList.listApps();
+    const byPackage = {};
+    installed.forEach(a => { byPackage[a.packageName] = a; });
+
+    APPS.forEach(app => {
+      const match = byPackage[app.pkg];
+      if (match) {
+        app.icon = match.icon;
+        app.n = match.label || app.n;
+      }
+    });
+
+    renderBeadContents();
+  } catch (err) {
+    // Leave fallback placeholders in place if anything goes wrong.
+    console.warn('loadRealIcons failed:', err);
+  }
+}
+
+/** Fills each bead's inner content (icon image or fallback letter). */
+function renderBeadContents(){
+  const beads = chain.children;
+  for (let idx=0; idx<beads.length; idx++){
+    const el = beads[idx];
+    const i = +el.dataset.i;
+    const app = APPS[i];
+    if (app.icon) {
+      el.style.background = 'transparent';
+      el.innerHTML = `<img src="${app.icon}" alt="${app.n}">`;
+    } else {
+      el.style.background = app.c;
+      el.textContent = app.n[0];
+    }
+  }
+}
+
 function layout(){
   // 1) compute every bead's current absolute angle under this rotation
   const angles = LOCAL.map((l,i) => ({ i, angle: l.angle + rotationAngle }));
@@ -182,8 +255,17 @@ function layout(){
     el.style.scale = String(scale);
     el.style.opacity = '1';
     el.style.zIndex = Math.round(scale*100);
+
     el.classList.toggle('dot', isDot);
-    el.textContent = isDot ? '' : APPS[i].n[0];
+    if (isDot) {
+      el.innerHTML = '';
+    } else if (APPS[i].icon) {
+      // Icon already rendered by renderBeadContents(); layout() only needs
+      // to size/position the bead, not touch its icon content.
+      if (!el.querySelector('img')) el.innerHTML = `<img src="${APPS[i].icon}" alt="${APPS[i].n}">`;
+    } else {
+      el.textContent = APPS[i].n[0];
+    }
   }
 }
 
@@ -346,7 +428,8 @@ function endRotDrag(e){
   if (wasTap && tapTarget){
     const scaleNow = parseFloat(tapTarget.style.scale || 0);
     if (scaleNow > DOT_SIZE + 0.05){
-      showToast(`Opening ${APPS[+tapTarget.dataset.i].n}`);
+      const app = APPS[+tapTarget.dataset.i];
+      launchRealApp(app);
     }
   } else if (Math.abs(velocity) > 0.01){
     startInertia(velocity);
@@ -355,7 +438,26 @@ function endRotDrag(e){
 chain.addEventListener('pointerup', endRotDrag);
 chain.addEventListener('pointercancel', endRotDrag);
 
+/**
+ * Launches the real app via the native AppList plugin. Falls back to a
+ * toast message if the plugin isn't available (e.g. testing in a plain
+ * browser) or if the launch itself fails (app not installed, etc.).
+ */
+async function launchRealApp(app){
+  if (!window.Capacitor || !window.Capacitor.Plugins || !window.Capacitor.Plugins.AppList) {
+    showToast(`Opening ${app.n} (no native bridge — browser preview)`);
+    return;
+  }
+  try {
+    await window.Capacitor.Plugins.AppList.launchApp({ packageName: app.pkg });
+  } catch (err) {
+    showToast(`Could not open ${app.n}`);
+    console.warn('launchApp failed:', err);
+  }
+}
+
 buildBeads();
+loadRealIcons();
 
 // ---------------------------------------------------------------------------
 // TEMPORARY debug screen: lists every launchable app installed on this phone
